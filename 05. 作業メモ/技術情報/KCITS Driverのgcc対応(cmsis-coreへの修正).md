@@ -16,7 +16,6 @@
 - `_wirte(),_read(),etc.`を実装する
 	実装例
 	この実装例では `_sbrk()`も実装しており、malloc()も利用可能。
-	KCITS実機で`printf(),getc(),pusc()`の動作は確認。ただしgets()はうまく動作しない。
 ```
 /*############################################################################
  * Copyright 2025 Sony Semiconductor Solutions Corporation.
@@ -131,17 +130,20 @@ int _read(int file, const void *ptr, int len)
     int32_t ret;
     int32_t rest = len;
     int32_t read = 0;
+    char c;
 
-    while (rest != 0) {
-        ret = UART_ReadFifo(MY_UART, (uint32_t)len, (uint8_t *)ptr, &read);
+    /* ブロッキング版 */
+    do {
+        ret = UART_ReadFifo(MY_UART, (uint32_t)1, (uint8_t *)&c, &read);
         if (ret != 0) {
             errno = ENOSYS;
             return -1;
         }
-        rest -= read;
-    }
+    } while(read != 1);
 
-    return len;
+    *(char *)ptr = c;
+
+    return 1;
 }
 
 // ------------------------------------------------------

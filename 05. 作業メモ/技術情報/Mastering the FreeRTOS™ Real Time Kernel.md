@@ -903,3 +903,543 @@ xTaskCreate() / xTaskCreateStatic() が返す値は次の 2 種類です：
 - pdFAIL
 	ヒープメモリが不足していてタスクを作成できなかった。  
 	（ヒープ管理については第3章を参照）
+
+## 4.5 Task Priorities
+
+## 4.6 Time Measurement and the Tick Interrupt
+
+4.12 節「スケジューリングアルゴリズム」で、  オプション機能である **タイムスライシング（time slicing）** が説明されています。
+
+これまでの例ではタイムスライシングが使用されており、  出力結果にもその動作が反映されていました。
+例では：
+- 2つのタスクは **同じ優先度** で作成され    
+- **常に実行可能（Ready）状態** であったため    
+
+スケジューラは両タスクに CPU を公平に割り当て、それぞれが **1タイムスライスずつ実行しては切り替わる** という動作になりました。
+
+図 4.3 において t1 と t2 の間が **1つのタイムスライス** に相当します。
+
+スケジューラは **各タイムスライスの終わり**に実行され、  次に Running 状態にするタスクを決定します。
+この処理は **tick 割り込み**（periodic interrupt）を使って行われます。
+
+tick 割り込みの周波数は、  **configTICK_RATE_HZ** によって設定されます。
+
+例：  
+configTICK_RATE_HZ = 100 (Hz) → 1タイムスライス 
+つまり：
+- **タイムスライス = 1 tick period**  
+
+タイムスライスの終わりだけがタスク切り替えのタイミングではない。
+スケジューラは以下のタイミングでも即座にタスクを切り替える：
+- 現在実行中のタスクが **Blocked 状態に入ったとき**   
+- 割り込みにより **より高優先度のタスクが Ready になったとき**    
+
+図 4.4 では、図 4.3 を拡張し **スケジューラの実行タイミング**も示しています。
+
+- 最上段の線がスケジューラの実行タイミング    
+- 細い矢印が    
+    - Running タスク → tick 割り込み        
+    - tick 割り込み → 次に Running になるタスク への遷移を表す        
+
+configTICK_RATE_HZ の最適値はアプリケーションによるが、  一般的には **100Hz** がよく使われます。
+
+FreeRTOS の API では **時間は tick 単位で指定**します。  
+そのためミリ秒表示を tick に変換するために：
+
+`pdMS_TO_TICKS()`
+
+マクロを使用します。
+注意：
+- configTICK_RATE_HZ > 1000 の場合（1kHz以上）は使用できない  
+    → tick 精度が1ms未満となり計算が成立しないため    
+
+```
+/* 
+ * pdMS_TO_TICKS() はミリ秒を tick 数に変換する。
+ * 下記は 200ms に相当する tick 数を xTimeInTicks に代入する例。
+ */ 
+ TickType_t xTimeInTicks = pdMS_TO_TICKS( 200 );`
+```
+
+これを使うことで、tick 周波数を変更しても アプリケーション内の時間指定を変更する必要がありません。
+
+tick count とは：
+- スケジューラ開始後から現在までに起きた tick 割り込みの総数    
+
+このカウンタはオーバーフローする場合があるが、  FreeRTOS は時間計算を内部で正しく処理するため  ユーザがオーバーフローを意識する必要はありません。
+
+これまでの例ではタスクは同じ優先度だった。  
+ここでは **異なる優先度のタスクを作るとどうなるか** を示す。
+Listing 4.11 のコードでは：
+- Task 1 → priority = **1**    
+- Task 2 → priority = **2（高い方）**    
+
+これらは同じ関数 vTaskFunction を利用し、  単に文字列を出力し、空ループでウェイトしている。
+
+```
+static const char * pcTextForTask1 = "Task 1 is running";
+static const char * pcTextForTask2 = "Task 2 is running";
+int main( void ) {
+     /* 優先度1のタスク作成 */
+     xTaskCreate( vTaskFunction,
+                  "Task 1",
+                  1000,
+                  ( void * ) pcTextForTask1,
+                  1,
+                   NULL );      
+    /* 優先度2のタスク作成（より高い） */
+    xTaskCreate( vTaskFunction,
+                      "Task 2",
+                       1000,
+                       ( void * ) pcTextForTask2,
+                       2,
+                       NULL );
+                       
+      /* スケジューラ開始 */
+      vTaskStartScheduler();
+      
+      return 0; /* ここには到達しない */ 
+}
+```
+---
+
+```
+Task 2 is running
+Task 2 is running
+Task 2 is running
+...
+```
+
+Task 1 のメッセージは **一度も表示されない**。
+理由：
+- スケジューラは **実行可能なタスクの中で最も高い優先度を必ず選ぶ**    
+- Task 2（優先度2）は常に Ready 状態（無限ループしているだけ）    
+- よって Task 1（優先度1）は **一度も Running 状態になれない**    
+
+この状態を **starvation（飢餓状態）** と呼ぶ。
+
+図 4.6 では、優先度が高い Task 2 が CPU を独占し、  
+Task 1 が一切実行されないスケジューリングパターンが表示されている。
+## 4.7 Expanding the Not Running State
+
+これまでの例で作成したタスクは、  常に何らかの処理を行っており、  **一度も「待つ必要がある状態」になりませんでした**。
+
+そして、待たないということは、  **常に Running 状態になれる** ということです。
+
+このような「**連続処理型（continuous processing）タスク**」は、  実際のアプリケーションでは **ほとんど役に立ちません**。
+
+理由：
+- 連続処理タスクを **最下位（最も低い）優先度**でしか作れない    
+- もしそれより高い優先度で作れば、   **下位優先度のタスクは永遠に実行されなくなる（飢餓状態）**
+
+連続処理型のタスクを実用的にするには、  それらを **イベント駆動型（event-driven）タスク** に書き換える必要があります。
+イベント駆動タスクとは：
+- **イベントが発生して初めて処理を行う**    
+- イベントが発生するまでは Running 状態に入れない（= 何もしない）    
+
+スケジューラは：
+- **実行可能なタスクの中で最も優先度が高いもの**  を常に選ぶ。
+
+しかし、高優先度タスクがイベント待ちのため Running になれなければ：
+- その間は **より低優先度のタスクが実行される**    
+
+つまり、タスクをイベント駆動型にすることで：
+- すべてのタスクに処理時間が回るようになる    
+- 高優先度タスクが下位タスクを **完全に飢餓状態にしてしまう問題** を防げる    
+- タスクを **異なる優先度で安全に作成できる**
+
+### 4.7.1 The Blocked State
+
+タスクがイベントを待っているとき、  そのタスクは **「Blocked（ブロック）」状態** にあると言います。  
+Blocked は **Not Running（非実行）」のサブ状態**です。
+
+タスクが Blocked 状態に入る理由は、次の **2種類のイベント待ち**に分類できます。
+
+ 1. 時間関連イベント（Temporal events）
+	これは **指定時間の経過や、特定の絶対時刻の到達** を待つ場合です。
+	例：
+	- タスクが「10ミリ秒待つ」ために Blocked 状態に入る  
+	    → 時間が来るまで実行されない
+    
+ 2. 同期イベント（Synchronization events）
+	これは **他のタスクや割り込みによって発生するイベント**を待つ場合です。
+	例：
+	- キューにデータが届くのを待つ
+    - セマフォを待つ
+    - イベントビットがセットされるのを待つ
+	同期イベントは非常に幅広い種類を含みます。
+	FreeRTOS では、次の機能が同期イベントを生成できます：
+	- キュー（queue）
+    - バイナリセマフォ
+    - カウンティングセマフォ
+    - ミューテックス
+    - 再帰ミューテックス
+    - イベントグループ
+    - ストリームバッファ
+    - メッセージバッファ
+    - **タスク通知（direct to task notification）**
+	   これらの多くは後の章で説明されます。
+
+タスクは「イベントを待つ + タイムアウトを設定する」ことで、  **2種類のイベントを同時に待つ**動作ができます。
+例：
+- 「最大 10ms の間、キューにデータが届くのを待つ」
+この場合：
+- 10ms の間にデータが届けば Blocked 状態から復帰    
+- 10ms 経過しても届かなければタイムアウトで復帰    
+
+どちらが先に起きても Blocked 状態を抜けます。
+
+### 4.7.2 The Suspended State
+
+### 4.7.3 The Ready State
+
+### 4.7.4 Completing the State Transition Diagram
+
+### 4.7.5 The vTaskDelayUntil() API Function
+
+直前の説明のとおり、**vTaskDelay()** の引数は：
+- 「タスクが vTaskDelay() を呼んでから、  
+- Blocked 状態を抜けるまでに発生する tick 割り込みの数」
+
+を指定します。
+
+つまり、**待ち時間は「呼び出した時点」からの相対時間**です。
+
+これに対して **vTaskDelayUntil()** の引数は：
+- **タスクが Ready 状態へ遷移すべき “絶対的な tick カウント値” を指定する**
+
+という点が決定的に異なります。
+
+vTaskDelayUntil() は、タスクを **正確な周期で実行したい** 場合に使用します。
+- vTaskDelay() → 待ち時間は「呼び出した瞬間からの相対時間」    
+- vTaskDelayUntil() → 待ち時間は「スケジュール上の絶対時刻」    
+
+よって、  **タスクが一定の頻度（一定周期）で正確に実行される必要がある場合は、  必ず vTaskDelayUntil() を使用すべきです。**
+
+例えばタスクが以下の動作をする場合：
+1. 何らかの処理（処理時間 5ms）    
+2. vTaskDelay(10) を実行    
+
+理論上は「10msごとに処理される」はずですが、  処理時間が加算されるため実際には：
+- 5ms（処理）    
+- 10ms（待機）    
+- 5ms    
+- 10ms  
+- …    
+	→ **周期は 15ms になってしまう（ドリフトする）**
+
+vTaskDelayUntil() を使用すると：
+- 「次に起きるべき tick 時刻」を計算し    
+- そこで正確に Blocked から Ready に戻す    
+
+よって処理時間に関係なく周期が一定になります。
+
+![[Pasted image 20251212175811.png]]
+
+Listing 4.14 vTaskDelayUntil() API function prototype
+
+#### vTaskDelayUntil() のパラメータ説明
+- **pxPreviousWakeTime**
+	このパラメータ名は、vTaskDelayUntil() を **一定周期で実行されるタスク** に使うことを想定して付けられています。
+	`pxPreviousWakeTime` が保持する値は、  **タスクが直前に Blocked 状態から復帰した時の tick 時刻** です。
+    vTaskDelayUntil() は、この値を基準にして    **次にタスクが Blocked から抜けるべき絶対時刻** を計算します。
+    `pxPreviousWakeTime` が指す変数は、   **vTaskDelayUntil() の内部で自動的に更新されます。**
+    
+	アプリケーション側で書き換える必要はありませんが、  
+	**初回使用前に必ず現在の tick count で初期化する必要があります。**
+	初期化例は Listing 4.15 に示されています。
+
+-  **xTimeIncrement**
+	このパラメータ名も、  タスクが **一定周期（固定された周波数）** で動作することを前提にしています。
+	`xTimeIncrement` には **周期（実行間隔）を tick 単位で指定**します。
+	 ミリ秒で周期を指定したい場合は`pdMS_TO_TICKS()`を使って tick 数に変換できます。
+	（例：100ms → pdMS_TO_TICKS(100)）
+
+| パラメータ                  | 意味              | アプリ側の操作                                        |
+| ---------------------- | --------------- | ---------------------------------------------- |
+| **pxPreviousWakeTime** | タスク前回実行時刻（tick） | 初回だけ「現在の tick」で初期化。以降は vTaskDelayUntil() が自動更新 |
+| **xTimeIncrement**     | 周期（tick 単位）     | ミリ秒なら pdMS_TO_TICKS() を使って指定                   |
+
+◎ 例：周期 100ms のタスク
+
+```
+TickType_t xLastWakeTime;
+const TickType_t xInterval = pdMS_TO_TICKS( 100 );
+
+/* 初期化（現在の tick 時刻をセット） */
+xLastWakeTime = xTaskGetTickCount();
+
+for( ;; ) {     
+	/* 周期実行 */
+	vTaskDelayUntil( &xLastWakeTime, xInterval );      /* 実行したい処理を書く */ }`
+```
+
+このタスクは、処理時間にかかわらず **正確に100ms周期**で動作します。
+
+図 4.11 は、**例 4.6（Example 4.6）** によって生成される出力を示しています。  
+そして図 4.12 は、その出力で観察される挙動を説明するための **実行シーケンス** を示しています。
+
+
+図 4.11 は、例 4.6（Example 4.6）によって生成される出力を示しています。  
+そして図 4.12 は、その出力で観察される動作を説明するための実行シーケンスを示しています。
+
+## 4.8 The Idle Task and the Idle Task Hook
+
+Example 4.4 で作成したタスクは、  ほとんどの時間を **Blocked 状態** で過ごします。
+Blocked 状態のタスクは **実行不能（Not Runnable）** であるため、  スケジューラがそれらを Running 状態として選択することはできません。
+
+FreeRTOS では必ず、**Running 状態に遷移できるタスクが最低 1つ存在する必要があります**。
+そのために、  **vTaskStartScheduler()** が呼ばれた時点で、  スケジューラは自動的に **Idle Task（アイドルタスク）** を生成します。
+
+Idle タスクは単純なループを繰り返すだけのタスクで、  最初の例に登場した「常に実行可能なタスク」と同様、  **常に Running 状態に入ることができます。**
+
+ - 注釈 1
+	Idle タスクは **優先度 0（最下位）** で動作します。
+	これは：
+	- Idle タスクがアプリケーションタスクの実行を妨げないようにするため
+    - 優先度 0 にアプリケーションタスクを作りたい場合は、それと共存できるようにするため
+    
+アプリケーション側で **優先度 0 のタスク** を自由に作成できます。
+FreeRTOSConfig.h の設定：
+`configIDLE_SHOULD_YIELD`
+を使うと、Idle タスクが  
+**同じ優先度（0）のアプリケーションタスクより CPU を取りすぎないように** 調整できます。  
+（詳細は 4.12 Scheduling Algorithms で説明）
+
+Idle タスクは最も低い優先度なので、**より高い優先度のタスクが Ready になった瞬間にスケジューラが切り替える**
+
+これが **プリエンプション（preemption）** です。
+図 4.9 の tn の時刻では：
+- Idle タスクが Running 状態だったが    
+- Task 2 が Blocked → Ready に変わった瞬間に    
+- Idle タスクは即座に **swapped out（スイッチアウト）** され    
+- Task 2 が **swapped in（スイッチイン）** される    
+
+プリエンプションは **自動的** に行われ、  プリエンプトされたタスク（Idle タスク）はこれを知りません。
+
+もしタスクが **vTaskDelete() を使って自分自身を削除する場合**は、 **Idle タスクが CPU 時間を奪われないようにすることが非常に重要です。**
+理由：
+- 自分自身を削除したタスクの後始末（TCBやスタックの解放）は   **Idle タスクの役割** だから    
+
+Idle タスクが starvation（飢餓状態）になると、  削除されたタスクのメモリが解放されず、  深刻なリソースリークや動作不良につながります。
+
+### 4.8.1 Idle Task Hook Functions
+
+FreeRTOS では **Idle Hook（アイドルフック）** と呼ばれる仕組みを使うことで、  Idle タスクにアプリケーション固有の処理を追加できます。
+
+Idle Hook とは：
+	**Idle タスクのループが 1 回まわるたびに自動的に呼び出される関数**
+です。
+
+Idle Hook は次のような用途でよく使われます：
+ 1. **低優先度のバックグラウンド処理を行う**
+	バックグラウンド処理や連続的に行う軽い処理を行いたいときに便利です。
+	- わざわざ専用のタスクを作る必要がない
+    - RAM 使用量（TCB + スタック）が増えない
+    → **軽量な周期処理**に最適。
+ 2. **CPU の空き時間（余剰処理能力）を測定する**
+	Idle タスクが実行されるのは：
+	 **すべての高優先度タスクが実行できないときだけ**
+	そのため Idle Hook 内で処理時間を測定すれば：
+	- Idle タスクにどれだけ CPU が割り当てられたか
+	- → システムの **空き処理能力（CPU マージン）**
+    が把握できます。
+	例：CPU 使用率の計算など。
+3. **CPU を低消費電力モードに移行させる**
+	Idle タスクにはアプリケーションの処理がないときに CPU に入るため、Idle Hook 内で MCU を低電力モードに入れる
+	という使い方ができます。
+	ただし：
+	- 省電力効果は **tickless idle（ティックレスアイドル）** ほど高くはない
+	- それでも簡単に電力節約を実現できる   
+
+FreeRTOSConfig.h に以下を追加します：
+`#define configUSE_IDLE_HOOK 1`
+
+そして以下の関数を定義します：
+```
+void vApplicationIdleHook( void ) {
+     /* Idle タスク内で実行したい処理を書く */ 
+}
+```
+
+### 4.8.2 Limitations on the Implementation of Idle Task Hook Functions
+
+## 4.9 Changing the Priority of a Task
+
+## 4.10 Deleting a Task
+
+## 4.11 Thread Local Storage and Reentrancy
+
+Thread Local Storage（TLS）は、  **各タスクの Task Control Block（TCB）内に、アプリケーションが任意のデータを保存できる仕組み**です。
+
+つまり：
+- **タスクごとに独立した“専用の変数”を持てる仕組み**
+です。
+これは、多くの RTOS や POSIX システムでも一般的な概念です。
+
+TLS は主に以下のような目的で利用されます。
+- 非再入可能（non-reentrant）関数のためのデータ保存
+	通常、非RTOS環境では「グローバル変数」に保存されるデータを、  
+	RTOS 環境では **TLS に保存してタスクごとに独立させる** 目的で使用されます。
+
+ 再入可能（reentrant）関数とは？
+- 複数のタスク（スレッド）から同時に呼んでも    
+- 副作用やデータ破壊を起こさず    
+- 完全に安全に動作できる関数    
+
+非再入可能（non-reentrant）関数とは？
+内部で以下のようなものを使用する関数です：
+- グローバル変数    
+- static ローカル変数    
+- 共有バッファ    
+
+そのため **複数タスクから同時に呼ぶと危険** です。
+
+通常はクリティカルセクションで保護する必要がありますが…
+非再入関数を守るためにクリティカルセクションを多用すると：
+- 割り込み禁止時間が増える   
+- スケジューリング精度が下がる    
+- リアルタイム性が低下する    
+
+これを避けるために、TLS を使って：
+ **タスクごとに独立したデータ領域を持たせるほうが、RTOS では有利**
+になります。
+
+TLS の代表例は：
+
+> **ISO C 標準の global 変数 `errno`**
+
+です。
+
+`errno` は、標準Cライブラリや POSIX システムで使用される  
+**拡張エラーコードを格納するグローバル変数**です。
+
+以下のような標準関数で使用されます：
+- `strtof`   
+- `strtol`    
+- その他の標準ライブラリ関数    
+
+これらは非再入関数であるため、  マルチスレッド環境では `errno` を **TLS によってタスクごとに分離する**必要があります。
+
+| 項目                        | 説明                             |
+| ------------------------- | ------------------------------ |
+| TLS（Thread Local Storage） | タスクごとに独立したデータ領域を持てる仕組み         |
+| 目的                        | 非再入関数が使うデータをタスクごとに分離する         |
+| 利点                        | クリティカルセクションを減らし、RTOS の性能を維持できる |
+| 代表例                       | C 標準ライブラリの `errno`             |
+### 4.11.1 C Runtime Thread Local Storage Implementations
+
+多くの組み込み向け libc 実装は、  **非再入（non-reentrant）関数がマルチスレッド環境で正しく動作できるようにするための API** を提供しています。
+
+FreeRTOS は、広く使われている 2 つのオープンソース C ランタイムライブラリ  **newlib** と **picolibc** の再入性（reentrancy）API をサポートしています。
+
+これらの **事前構築済みの C ランタイム用 Thread Local Storage（TLS）実装** は、  プロジェクトの FreeRTOSConfig.h に以下のマクロを定義することで有効化できます。
+
+- **configUSE_NEWLIB_REENTRANT**（newlib を使用する場合）    
+- **configUSE_PICOLIBC_TLS**（picolibc を使用する場合）    
+
+これらのマクロを有効にすると、FreeRTOS がタスクごとに TLS 領域を確保し、  newlib/picolibc が必要とする「タスク固有の errno、標準ライブラリ状態」などを  自動的に提供してくれます。
+
+特に **newlib の `_reent` 構造体** の扱いは複雑で手作業でサポートするのは困難なため、  `configUSE_NEWLIB_REENTRANT` を 1 にするのが推奨されます。
+
+### 4.11.2 Custom C Runtime Thread Local Storage
+
+アプリケーション開発者は、FreeRTOSConfig.h ファイル内で以下のマクロを定義することで、 独自の Thread Local Storage（TLS）を実装できます。
+
+- **configUSE_C_RUNTIME_TLS_SUPPORT** を 1 に定義すると、   C ランタイム用 Thread Local Storage サポートが有効になります。    
+- **configTLS_BLOCK_TYPE**   C ランタイム Thread Local Storage データを保存するために使用する **C の型** を定義します。    
+- **configINIT_TLS_BLOCK**     C ランタイム Thread Local Storage ブロックを **初期化するときに実行される C コード**を定義します。    
+- **configSET_TLS_BLOCK**      新しいタスクが **スイッチインされる際に実行される C コード**を定義します。    
+- **configDEINIT_TLS_BLOCK**     C ランタイム Thread Local Storage ブロックを **解放（デイニシャライズ）するときに実行される C コード**を定義します。    
+
+この仕組みは以下のような場合に必要になります：
+- newlib や picolibc のようなライブラリを使わず  **アプリケーション側で独自の TLS 管理を実装したい場合**    
+- `errno` のようなスレッド固有データを自前で管理したい場合    
+- C ランタイム以外のライブラリで TLS を必要とする場合    
+
+FreeRTOS は TCB（Task Control Block）内に TLS 用の領域を確保できるため、  上記マクロを使うことで自由に TLS の初期化・切り替え・解放処理を追加できます。
+
+### 4.11.3 Application Thread Local Storage
+
+C ランタイム用 Thread Local Storage に加えて、 アプリケーション開発者は **アプリケーション固有のポインタセット** を  タスクコントロールブロック（TCB）内に追加することもできます。
+
+この機能は、プロジェクトの FreeRTOSConfig.h にて  `configNUM_THREAD_LOCAL_STORAGE_POINTERS` を **0 以外の値に設定**することで有効になります。
+
+`Listing 4.30` に示す関数 **vTaskSetThreadLocalStoragePointer** と  **pvTaskGetThreadLocalStoragePointer** を使用すると、  実行時にそれぞれ TLS ポインタの値を **設定**および **取得**できます。
+
+### Thread Local Storage Pointer API の関数プロトタイプ
+
+```
+void * pvTaskGetThreadLocalStoragePointer( TaskHandle_t xTaskToQuery,
+                                           BaseType_t xIndex );
+
+void vTaskSetThreadLocalStoragePointer( TaskHandle_t xTaskToSet,
+                                         BaseType_t xIndex,                                          
+                                         void * pvValue );`
+
+```
+
+FreeRTOS の TLS 機能は次のように使えます：
+- **タスクごとに独立したデータ構造を持たせたい**    
+- **ドライバ/ミドルウェアがタスクごとに状態を保持したい**    
+- **グローバル変数をなくしたい**    
+- **オブジェクト指向ライクにタスクごとの “メンバ変数” を持たせたい**    
+
+`configNUM_THREAD_LOCAL_STORAGE_POINTERS` に 5 を設定した場合、  各タスクには __5 個の void_ スロット_* が割り当てられます。
+例：タスクごとにログバッファを割り当てたい場合などに利用できます。
+
+## 4.12 Scheduling Algorithms
+
+# 5 Queue Management
+
+## 5.1 Introduction
+
+「キュー（Queue）」は、  **タスク間（task-to-task）、タスクから割り込み（task-to-interrupt）、割り込みからタスク（interrupt-to-task）**  
+への通信メカニズムを提供します。
+### 5.1.1 Scope
+
+この章では次の内容を扱います：
+- **キューの作成方法**    
+- **キューが内部データをどのように管理するか**    
+- **キューへデータを送信する方法**    
+- **キューからデータを受信する方法**    
+- **キューでブロックするとはどういうことか**    
+- **複数のキューを待ち受け（ブロックし）ながら扱う方法**    
+- **キュー内のデータを上書きする方法**    
+- **キューをクリア（空に）する方法**    
+- **キューの読み書きにおけるタスク優先度の影響**    
+
+なお、この章で扱うのは **タスク間（task-to-task）通信のみ** です。  
+**タスク ↔ 割り込み** の通信については第7章で説明します。
+## 5.2 Characteristics of a Queue
+
+# 6 Software Timer Management
+
+## 6.1 Chapter Introduction and Scope
+
+ソフトウェアタイマーは、**将来の決められた時刻** または **一定周期（固定周期）** で、ある関数を実行するために使用されます。  
+このとき実行される関数を **ソフトウェアタイマーのコールバック関数** と呼びます。
+
+ソフトウェアタイマーは FreeRTOS カーネルによって実装・管理されます。  
+ハードウェアのサポートを必要とせず、ハードウェアタイマーやハードウェアカウンタとは無関係です。
+
+FreeRTOS の「必要なときだけ動作させる」という設計哲学に沿い、  **ソフトウェアタイマーのコールバック関数が実行されるとき以外は、  ソフトウェアタイマーは CPU 時間を一切消費しません。**
+
+ソフトウェアタイマー機能はオプションです。  
+ソフトウェアタイマーを利用するには次の手順を実行します：
+ 1. FreeRTOS ソースファイル
+	`FreeRTOS/Source/timers.c`  
+	をプロジェクトにビルド対象として追加する。
+ 2. FreeRTOSConfig.h に以下の定数を定義する：
+	- **configUSE_TIMERS**
+		 値を `1` に設定するとソフトウェアタイマー機能が有効になる。
+    - **configTIMER_TASK_PRIORITY**
+		タイマーサービスタスクの優先度を  
+	    `0 ～ (configMAX_PRIORITIES - 1)` の範囲で設定する。
+    -  **configTIMER_QUEUE_LENGTH**
+		 タイマーコマンドキューが保持できる  
+	    **未処理コマンド数の最大値** を設定する。
+    - **configTIMER_TASK_STACK_DEPTH**
+	 タイマーサービスタスクに割り当てるスタックサイズを  **ワード数（bytes ではなく words）** で設定する。
+
+### 6.1.1 Scope

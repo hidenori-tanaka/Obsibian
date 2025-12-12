@@ -20,7 +20,7 @@
 	これだけで、標準出力、標準入力がUARTに変更できる。
 	
 参考
-- [[retargeting_output_to_uart_102440_0100_02_en.pdf]]
+- [[作業メモ/retargeting_output_to_uart_102440_0100_02_en.pdf]]
 
 2.  GCCの場合
 	

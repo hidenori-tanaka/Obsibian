@@ -187,7 +187,7 @@ int fgetc(FILE *f)
 ```
 参考
 Retargeting output to UART
-![[retargeting_output_to_uart_102440_0100_02_en.pdf]]
+![[作業メモ/retargeting_output_to_uart_102440_0100_02_en.pdf]]
 
 2. 低レベルI/Oをリターゲットする場合
 	実装例

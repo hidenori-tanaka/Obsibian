@@ -1,5 +1,5 @@
 
-### Introduction
+# Introduction
 
 多くの何千ものアプリケーションが、ARM Cortex-M コア上で FreeRTOS を動作させています。  
 それにもかかわらず、この RTOS と ARM Cortex CPU コアの組み合わせに関する技術サポートの問い合わせが非常に少ないことは、むしろ驚くべきことです。
@@ -9,13 +9,11 @@
 
 このページの目的は、ARM Cortex-M の割り込み優先度メカニズムを説明し、それを RTOS カーネルと共にどのように利用すべきかを説明することです。
 
----
-
 なお、ARM Cortex-M3 コアが採用している優先度方式は複雑に見えるかもしれませんが、**FreeRTOS のすべての公式ポートには、正しく設定されたデモアプリケーションが付属しており、リファレンスとして使用できます。**
 
 さらに、FreeRTOS V7.5.0 では、**ARM Cortex-M の割り込みコントローラ（NVIC）の設定ミスを検出するための configASSERT() 呼び出しが追加**されました。  
 開発時には必ず **configASSERT() を有効にしてください。**
-### Available Priority Levels
+# Available Priority Levels
 
 ### Cortex-M hardware details
 

@@ -3,10 +3,12 @@
 参考ページ
 # [Running the RTOS on a ARM Cortex-M Core](https://www.freertos.org/Documentation/02-Kernel/03-Supported-devices/04-Demos/ARM-Cortex/RTOS-Cortex-M3-M4)
 
+- 割り込み優先度に関して
+	CortexM4 の割り込み優先度は 3bit で定義されているので 0~7の優先度を持つ。
+
 		上記ページ和訳 [[Running the RTOS on a ARM Cortex-M Core]]
 	[[Running the RTOS on a ARM Cortex-M Core]]
 	[Running the RTOS on a ARM Cortex-M Core]
-- [R]
 - ディレクトリ構成
 ```
 ROOT 

@@ -6,9 +6,14 @@
 - 割り込み優先度に関して
 	CortexM4 の割り込み優先度は 3bit で定義されているので 0~7の優先度を持つ。
 
-		上記ページ和訳 [[Running the RTOS on a ARM Cortex-M Core]]
-	[[Running the RTOS on a ARM Cortex-M Core]]
-	[Running the RTOS on a ARM Cortex-M Core]
+0xE00ED0C AIRCR レジスタの値  0xFA05_0000
+
+![[Pasted image 20251213145418.png|700]]
+
+ENDIANNESS : 0 - Little
+PRIGROUP     :  0
+	優先度の上位2ビットが優先度グループ、下位1bitが順番として用いられる
+
 - ディレクトリ構成
 ```
 ROOT 

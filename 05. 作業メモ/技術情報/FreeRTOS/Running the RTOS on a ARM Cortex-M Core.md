@@ -28,8 +28,7 @@ ARM Cortex-M アーキテクチャ自体は **最大 256 種類の優先度**を
 例えば：
 
 - **TI Stellaris Cortex-M3 / Cortex-M4** マイクロコントローラは **3 ビットの優先度**を実装しており、  
-    → **8 種類の優先度値**が利用できます。
-   
+    → **8 種類の優先度値**が利用できます。   
 - **NXP LPC17xx Cortex-M3** マイクロコントローラは **5 ビットの優先度**を実装しており、  
     → **32 種類の優先度値**が利用できます。
    
@@ -68,15 +67,10 @@ FreeRTOSConfig.h にある **`configMAX_SYSCALL_INTERRUPT_PRIORITY`** は、  �
 ただし notable（目立った）例外として **STM32 のドライバライブラリ** があります。
 
 もし STM32 を STM32 公式ドライバライブラリと共に使用している場合は、  
-RTOS を起動する前に以下を呼び出して、  
-**すべての優先度ビットがプリエンプト優先度ビットとして扱われるように設定してください**：
-
+RTOS を起動する前に以下を呼び出して、  **すべての優先度ビットがプリエンプト優先度ビットとして扱われるように設定してください**：
 `NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );`
 
----
-
-この要件を満たさないと、FreeRTOS の割り込み優先度ルールが正しく働かず、  
-思わぬ動作不良につながる可能性があります。
+この要件を満たさないと、FreeRTOS の割り込み優先度ルールが正しく働かず、  思わぬ動作不良につながる可能性があります。
 
 ### Inverse Relationship Between Numeric Priority Value and the Logical Priority Setting
 
